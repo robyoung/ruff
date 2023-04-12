@@ -1,5 +1,7 @@
 //! Checks relating to shell injection
 
+use std::collections::HashMap;
+
 use num_bigint::BigInt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -86,59 +88,51 @@ impl Violation for StartProcessWithPartialPath {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 enum CallKind {
     Subprocess,
     Shell,
     NoShell,
 }
 
-struct Config<'a> {
-    subprocess: Vec<Vec<&'a str>>,
-    shell: Vec<Vec<&'a str>>,
-    no_shell: Vec<Vec<&'a str>>,
-}
+static CONFIG: Lazy<HashMap<&'static str, CallKind>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert("subprocess.Popen", CallKind::Subprocess);
+    m.insert("subprocess.call", CallKind::Subprocess);
+    m.insert("subprocess.check_call", CallKind::Subprocess);
+    m.insert("subprocess.check_output", CallKind::Subprocess);
+    m.insert("subprocess.run", CallKind::Subprocess);
+    m.insert("os.system", CallKind::Shell);
+    m.insert("os.popen", CallKind::Shell);
+    m.insert("os.popen2", CallKind::Shell);
+    m.insert("os.popen3", CallKind::Shell);
+    m.insert("os.popen4", CallKind::Shell);
+    m.insert("popen2.popen2", CallKind::Shell);
+    m.insert("popen2.popen3", CallKind::Shell);
+    m.insert("popen2.popen4", CallKind::Shell);
+    m.insert("popen2.Popen3", CallKind::Shell);
+    m.insert("popen2.Popen4", CallKind::Shell);
+    m.insert("commands.getoutput", CallKind::Shell);
+    m.insert("commands.getstatusoutput", CallKind::Shell);
+    m.insert("os.execl", CallKind::NoShell);
+    m.insert("os.execle", CallKind::NoShell);
+    m.insert("os.execlp", CallKind::NoShell);
+    m.insert("os.execlpe", CallKind::NoShell);
+    m.insert("os.execv", CallKind::NoShell);
+    m.insert("os.execve", CallKind::NoShell);
+    m.insert("os.execvp", CallKind::NoShell);
+    m.insert("os.execvpe", CallKind::NoShell);
+    m.insert("os.spawnl", CallKind::NoShell);
+    m.insert("os.spawnle", CallKind::NoShell);
+    m.insert("os.spawnlp", CallKind::NoShell);
+    m.insert("os.spawnlpe", CallKind::NoShell);
+    m.insert("os.spawnv", CallKind::NoShell);
+    m.insert("os.spawnve", CallKind::NoShell);
+    m.insert("os.spawnvp", CallKind::NoShell);
+    m.insert("os.spawnvpe", CallKind::NoShell);
+    m.insert("os.startfile", CallKind::NoShell);
 
-static CONFIG: Lazy<Config> = Lazy::new(|| Config {
-    subprocess: vec![
-        vec!["subprocess", "Popen"],
-        vec!["subprocess", "call"],
-        vec!["subprocess", "check_call"],
-        vec!["subprocess", "check_output"],
-        vec!["subprocess", "run"],
-    ],
-    shell: vec![
-        vec!["os", "system"],
-        vec!["os", "popen"],
-        vec!["os", "popen2"],
-        vec!["os", "popen3"],
-        vec!["os", "popen4"],
-        vec!["popen2", "popen2"],
-        vec!["popen2", "popen3"],
-        vec!["popen2", "popen4"],
-        vec!["popen2", "Popen3"],
-        vec!["popen2", "Popen4"],
-        vec!["commands", "getoutput"],
-        vec!["commands", "getstatusoutput"],
-    ],
-    no_shell: vec![
-        vec!["os", "execl"],
-        vec!["os", "execle"],
-        vec!["os", "execlp"],
-        vec!["os", "execlpe"],
-        vec!["os", "execv"],
-        vec!["os", "execve"],
-        vec!["os", "execvp"],
-        vec!["os", "execvpe"],
-        vec!["os", "spawnl"],
-        vec!["os", "spawnle"],
-        vec!["os", "spawnlp"],
-        vec!["os", "spawnlpe"],
-        vec!["os", "spawnv"],
-        vec!["os", "spawnve"],
-        vec!["os", "spawnvp"],
-        vec!["os", "spawnvpe"],
-        vec!["os", "startfile"],
-    ],
+    m
 });
 
 #[derive(Copy, Clone, Debug)]
@@ -243,29 +237,11 @@ fn shell_call_looks_safe(arg: &Expr) -> bool {
 }
 
 fn get_call_kind(checker: &mut Checker, func: &Expr) -> Option<CallKind> {
-    checker.ctx.resolve_call_path(func).and_then(|call_path| {
-        if CONFIG
-            .subprocess
-            .iter()
-            .any(|subprocess| call_path.as_slice() == subprocess.as_slice())
-        {
-            Some(CallKind::Subprocess)
-        } else if CONFIG
-            .shell
-            .iter()
-            .any(|shell| call_path.as_slice() == shell.as_slice())
-        {
-            Some(CallKind::Shell)
-        } else if CONFIG
-            .no_shell
-            .iter()
-            .any(|no_shell| call_path.as_slice() == no_shell.as_slice())
-        {
-            Some(CallKind::NoShell)
-        } else {
-            None
-        }
-    })
+    checker
+        .ctx
+        .resolve_call_path(func)
+        .and_then(|call_path| CONFIG.get(call_path.as_slice().join(".").as_str()))
+        .copied()
 }
 
 fn string_literal_including_list(expr: &Expr) -> Option<&str> {
